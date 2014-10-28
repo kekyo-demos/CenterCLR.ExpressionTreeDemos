@@ -1,6 +1,7 @@
 ﻿using ClosedXML.Excel;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -60,6 +61,43 @@ namespace CenterCLR.Demo1
 				return (string)fieldInfo.GetValue(null);
 			}
 		}
+
+		public static void WriteMessages(string messagePath)
+		{
+			var dataTable = new DataTable("Message");
+			dataTable.Columns.Add("キー", typeof(string));
+			dataTable.Columns.Add("メッセージ", typeof(string));
+
+			// 読み込まれている全てのクラスを調べて、フィールド定義を抽出する
+			var fields =
+				from assembly in AppDomain.CurrentDomain.GetAssemblies().AsParallel()
+				from type in assembly.GetTypes()
+				where
+					(type.Namespace != null) &&
+					(type.Namespace.StartsWith("CenterCLR.") == true) &&	// 簡易絞り込み
+					(type.IsClass == true) &&
+					(type.IsNested == false) &&
+					(type.IsGenericType == false)
+				from fieldInfo in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+				where fieldInfo.FieldType == typeof(string)
+				select fieldInfo;
+
+			fields.ForEach(fieldInfo =>
+				{
+					var key = string.Format("{0}.{1}.{2}", fieldInfo.DeclaringType.Namespace, fieldInfo.DeclaringType.Name, fieldInfo.Name);
+					var value = (string)fieldInfo.GetValue(null);
+					dataTable.Rows.Add(key, value);
+				});
+			
+			using (var fs = new FileStream(messagePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+			{
+				var workbook = new XLWorkbook();
+				workbook.Worksheets.Add(dataTable);
+
+				workbook.SaveAs(fs);
+				fs.Close();
+			}
+		}
 	}
 
 	class Program
@@ -69,6 +107,8 @@ namespace CenterCLR.Demo1
 
 		static void Main(string[] args)
 		{
+			MessageManager.WriteMessages("SampleMessage.xlsx");
+
 			var manager = new MessageManager("Message.xlsx");
 
 			var title = manager.GetMessage(() => TitleMessage);
