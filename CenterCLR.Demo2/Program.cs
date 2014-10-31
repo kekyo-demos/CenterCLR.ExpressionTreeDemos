@@ -85,6 +85,7 @@ namespace CenterCLR.Demo2
 
 				foreach (var column in csvDefinitions.Values.OrderBy(column => column.Number))
 				{
+					tw.WriteLine("		[CsvColumnIndex({0})]", column.Number);
 					tw.WriteLine("		public {0} {1}", column.FieldClrType, column.FieldName);
 					tw.WriteLine("		{");
 					tw.WriteLine("			get;");
@@ -130,7 +131,15 @@ namespace CenterCLR.Demo2
 
 			foreach (var fields in CreateCsvContext("ken_all.csv", Encoding.GetEncoding("Shift_JIS")))
 			{
+				// モデルクラスに変換する
+				var model = new CsvModel
+				{
+					コード = ParseInt32(fields[0], -1),
+					旧郵便番号 = fields[1],
+					郵便番号 = fields[2],
 
+					// ...
+				};
 			}
 		}
 	}

@@ -50,6 +50,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="CsvColumn.cs" />
+    <Compile Include="CsvColumnIndexAttribute.cs" />
     <Compile Include="csvmodel.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
