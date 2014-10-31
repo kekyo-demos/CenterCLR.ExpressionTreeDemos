@@ -2,6 +2,7 @@
 using System.ComponentModel.Design.Serialization;
 using System.Data.Common;
 using System.Globalization;
+using System.Linq.Expressions;
 using System.Reflection;
 using ClosedXML.Excel;
 using System;
@@ -88,6 +89,21 @@ namespace CenterCLR.Demo2
 				tw.WriteLine("	public sealed class {0}", modelName);
 				tw.WriteLine("	{");
 
+				// コンストラクタを定義
+				tw.WriteLine("		public {0}(string[] fields)", modelName);
+				tw.WriteLine("		{");
+
+				foreach (var column in csvDefinitions.Values.OrderBy(column => column.Number))
+				{
+					tw.WriteLine(
+						"			this.{0} = ({2})Utilities.ConvertTo(fields[{1}], typeof({2}));",
+						column.FieldName,
+						column.Number,
+						column.FieldClrType);
+				}
+
+				tw.WriteLine("		}");
+
 				foreach (var column in csvDefinitions.Values.OrderBy(column => column.Number))
 				{
 					tw.WriteLine("		[CsvColumnIndex({0})]", column.Number);
@@ -141,24 +157,49 @@ namespace CenterCLR.Demo2
 							var stringValue = fields[entry.Index];
 
 							// 文字列からプロパティの型に変換する
-							object value;
-							if (entry.PropertyInfo.PropertyType == typeof(bool))
-							{
-								value = int.Parse(stringValue, CultureInfo.InvariantCulture) != 0;
-							}
-							else if (entry.PropertyInfo.PropertyType.IsEnum == true)
-							{
-								value = Enum.Parse(entry.PropertyInfo.PropertyType, stringValue);
-							}
-							else
-							{
-								value = Convert.ChangeType(stringValue, entry.PropertyInfo.PropertyType, CultureInfo.InvariantCulture);
-							}
+							var value = Utilities.ConvertTo(stringValue, entry.PropertyInfo.PropertyType);
 
 							// プロパティに設定（setterを呼び出す）
 							entry.PropertyInfo.SetValue(model, value);
 						}
 
+						yield return model;
+					}
+				}
+			}
+		}
+
+		private static IEnumerable<T> CreateCsvContext2<T>(string csvDefinitionPath, Encoding encoding)
+		{
+			// コンストラクタのパラメータを示す式木 (string[] fields)
+			var parameters = new[] { Expression.Parameter(typeof(string[])) };
+
+			// var model = (fields) => new T(fields);
+			var root = Expression.Lambda<Func<string[], T>>(
+				Expression.New(
+				typeof(T).GetConstructor(new[] { typeof(string[]) }), parameters),
+				parameters);
+
+			// 式木をコンパイルして、実行可能なデリゲートを得る
+			var creator = root.Compile();
+
+			using (var fs = new FileStream(csvDefinitionPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+			{
+				using (var parser = new TextFieldParser(fs, encoding, true))
+				{
+					parser.Delimiters = new[] { "," };
+					parser.HasFieldsEnclosedInQuotes = true;
+					parser.TextFieldType = FieldType.Delimited;
+					parser.TrimWhiteSpace = true;
+
+					// レコードが存在する限り続ける
+					while (parser.EndOfData == false)
+					{
+						// 一行読み取る
+						var fields = parser.ReadFields();
+
+						// インスタンスを生成
+						var model = creator(fields);
 						yield return model;
 					}
 				}
@@ -171,7 +212,7 @@ namespace CenterCLR.Demo2
 			WriteModelSource(@"..\..\csvmodel.cs", "CenterCLR.Demo2", "CsvModel", csvDefinitions);
 
 			// コンテキストを生成
-			var context = CreateCsvContext<CsvModel>("ken_all.csv", Encoding.GetEncoding("Shift_JIS"));
+			var context = CreateCsvContext2<CsvModel>("ken_all.csv", Encoding.GetEncoding("Shift_JIS"));
 
 			// 都道府県別にグルーピングして昇順にソートし、レコード数をカウントする
 			var groupedCounts =
