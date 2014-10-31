@@ -1,4 +1,8 @@
-﻿using System.ComponentModel.Design.Serialization;
+﻿using System.ComponentModel;
+using System.ComponentModel.Design.Serialization;
+using System.Data.Common;
+using System.Globalization;
+using System.Reflection;
 using ClosedXML.Excel;
 using System;
 using System.Collections.Generic;
@@ -6,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using DocumentFormat.OpenXml.Drawing.Charts;
 using Microsoft.VisualBasic.FileIO;
 
 namespace CenterCLR.Demo2
@@ -101,7 +106,8 @@ namespace CenterCLR.Demo2
 			}
 		}
 
-		private static IEnumerable<string[]> CreateCsvContext(string csvDefinitionPath, Encoding encoding)
+		private static IEnumerable<T> CreateCsvContext<T>(string csvDefinitionPath, Encoding encoding)
+			where T : new()
 		{
 			using (var fs = new FileStream(csvDefinitionPath, FileMode.Open, FileAccess.Read, FileShare.Read))
 			{
@@ -118,7 +124,42 @@ namespace CenterCLR.Demo2
 						// 一行読み取る
 						var fields = parser.ReadFields();
 
-						yield return fields;
+						var model = new T();
+
+						// リフレクションで動的に値を代入する
+						foreach (var entry in
+							from pi in typeof(T).GetProperties()
+							let csvColumnIndexAttribute = pi.GetCustomAttribute<CsvColumnIndexAttribute>()
+							where csvColumnIndexAttribute != null
+							select new
+							{
+								PropertyInfo = pi,
+								Index = csvColumnIndexAttribute.Index
+							})
+						{
+							// CsvColumnIndex属性で指定された位置の値文字列を得る
+							var stringValue = fields[entry.Index];
+
+							// 文字列からプロパティの型に変換する
+							object value;
+							if (entry.PropertyInfo.PropertyType == typeof(bool))
+							{
+								value = int.Parse(stringValue, CultureInfo.InvariantCulture) != 0;
+							}
+							else if (entry.PropertyInfo.PropertyType.IsEnum == true)
+							{
+								value = Enum.Parse(entry.PropertyInfo.PropertyType, stringValue);
+							}
+							else
+							{
+								value = Convert.ChangeType(stringValue, entry.PropertyInfo.PropertyType, CultureInfo.InvariantCulture);
+							}
+
+							// プロパティに設定（setterを呼び出す）
+							entry.PropertyInfo.SetValue(model, value);
+						}
+
+						yield return model;
 					}
 				}
 			}
@@ -129,17 +170,24 @@ namespace CenterCLR.Demo2
 			var csvDefinitions = LoadCsvDefinitions("csvdefinition.xlsx");
 			WriteModelSource(@"..\..\csvmodel.cs", "CenterCLR.Demo2", "CsvModel", csvDefinitions);
 
-			foreach (var fields in CreateCsvContext("ken_all.csv", Encoding.GetEncoding("Shift_JIS")))
-			{
-				// モデルクラスに変換する
-				var model = new CsvModel
-				{
-					コード = ParseInt32(fields[0], -1),
-					旧郵便番号 = fields[1],
-					郵便番号 = fields[2],
+			// コンテキストを生成
+			var context = CreateCsvContext<CsvModel>("ken_all.csv", Encoding.GetEncoding("Shift_JIS"));
 
-					// ...
+			// 都道府県別にグルーピングして昇順にソートし、レコード数をカウントする
+			var groupedCounts =
+				from model in context
+				group model by model.都道府県名 into g
+				orderby g.Key
+				select new
+				{
+					都道府県名 = g.Key,
+					レコード数 = g.Count()
 				};
+
+			// 結果を出力する
+			foreach (var groupedCount in groupedCounts)
+			{
+				Console.WriteLine("{0} = {1}", groupedCount.都道府県名, groupedCount.レコード数);
 			}
 		}
 	}
