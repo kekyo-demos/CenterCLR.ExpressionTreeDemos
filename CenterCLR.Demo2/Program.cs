@@ -45,13 +45,66 @@ namespace CenterCLR.Demo2
 				ToDictionary(entry => entry.FieldName, entry => entry);
 		}
 
-		static void Main(string[] args)
+		private static void WriteModelSource(
+			string modelSourcePath,
+			string modelNamespace,
+			string modelName,
+			IReadOnlyDictionary<string, CsvColumn> csvDefinitions)
 		{
-			var csvDefinitions = LoadCsvDefinitions("csvdefinition.xlsx");
-
-			using (var fs = new FileStream("sample.csv", FileMode.Open, FileAccess.Read, FileShare.Read))
+			using (var fs = new FileStream(modelSourcePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
 			{
-				using (var parser = new TextFieldParser(fs, Encoding.UTF8, true))
+				var tw = new StreamWriter(fs, Encoding.UTF8);
+
+				tw.WriteLine("namespace {0}", modelNamespace);
+				tw.WriteLine("{");
+
+				// Enumを出力
+				foreach (var entry in
+					from column in csvDefinitions.Values
+					let definition = column.FieldClrEnumDefinition
+					where definition != null
+					select new
+					{
+						Type = column.FieldClrType,
+						Definition = definition
+					})
+				{
+					tw.WriteLine("	public enum {0}", entry.Type);
+					tw.WriteLine("	{");
+
+					foreach (var definition in entry.Definition.OrderBy(definition => definition.Value))
+					{
+						tw.WriteLine("		{0} = {1},", definition.Key, definition.Value);
+					}
+
+					tw.WriteLine("	}");
+				}
+
+				tw.WriteLine("	public sealed class {0}", modelName);
+				tw.WriteLine("	{");
+
+				foreach (var column in csvDefinitions.Values.OrderBy(column => column.Number))
+				{
+					tw.WriteLine("		public {0} {1}", column.FieldClrType, column.FieldName);
+					tw.WriteLine("		{");
+					tw.WriteLine("			get;");
+					tw.WriteLine("			set;");
+					tw.WriteLine("		}");
+				}
+
+				tw.WriteLine("	}");
+				tw.WriteLine("}");
+
+				tw.Flush();
+				fs.Close();
+			}
+		}
+
+		private static IEnumerable<string[]> CreateCsvContext(string csvDefinitionPath, Encoding encoding)
+		{
+			using (var fs = new FileStream(csvDefinitionPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+			{
+				using (var parser = new TextFieldParser(fs, encoding, true))
 				{
 					parser.Delimiters = new[] { "," };
 					parser.HasFieldsEnclosedInQuotes = true;
@@ -62,11 +115,22 @@ namespace CenterCLR.Demo2
 					while (parser.EndOfData == false)
 					{
 						// 一行読み取る
-						string[] fields = parser.ReadFields();
+						var fields = parser.ReadFields();
 
-						// TODO: なにか
+						yield return fields;
 					}
 				}
+			}
+		}
+
+		static void Main(string[] args)
+		{
+			var csvDefinitions = LoadCsvDefinitions("csvdefinition.xlsx");
+			WriteModelSource(@"..\..\csvmodel.cs", "CenterCLR.Demo2", "CsvModel", csvDefinitions);
+
+			foreach (var fields in CreateCsvContext("ken_all.csv", Encoding.GetEncoding("Shift_JIS")))
+			{
+
 			}
 		}
 	}
