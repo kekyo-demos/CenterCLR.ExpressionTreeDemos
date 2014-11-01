@@ -18,24 +18,6 @@
 	}
 	public sealed class CsvModel
 	{
-		public CsvModel(string[] fields)
-		{
-			this.コード = (int)Utilities.ConvertTo(fields[0], typeof(int));
-			this.旧郵便番号 = (string)Utilities.ConvertTo(fields[1], typeof(string));
-			this.郵便番号 = (string)Utilities.ConvertTo(fields[2], typeof(string));
-			this.都道府県カナ名 = (string)Utilities.ConvertTo(fields[3], typeof(string));
-			this.市区町村カナ名 = (string)Utilities.ConvertTo(fields[4], typeof(string));
-			this.町域カナ名 = (string)Utilities.ConvertTo(fields[5], typeof(string));
-			this.都道府県名 = (string)Utilities.ConvertTo(fields[6], typeof(string));
-			this.市区町村名 = (string)Utilities.ConvertTo(fields[7], typeof(string));
-			this.町域名 = (string)Utilities.ConvertTo(fields[8], typeof(string));
-			this.重郵便番号 = (bool)Utilities.ConvertTo(fields[9], typeof(bool));
-			this.小字別町域 = (bool)Utilities.ConvertTo(fields[10], typeof(bool));
-			this.丁目 = (bool)Utilities.ConvertTo(fields[11], typeof(bool));
-			this.重町域 = (bool)Utilities.ConvertTo(fields[12], typeof(bool));
-			this.更新 = (更新Values)Utilities.ConvertTo(fields[13], typeof(更新Values));
-			this.変更理由 = (変更理由Values)Utilities.ConvertTo(fields[14], typeof(変更理由Values));
-		}
 		[CsvColumnIndex(0)]
 		public int コード
 		{

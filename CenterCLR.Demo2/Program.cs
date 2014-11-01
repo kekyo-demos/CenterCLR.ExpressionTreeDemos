@@ -31,7 +31,7 @@ namespace CenterCLR.Demo2
 			}
 		}
 
-		private static IReadOnlyDictionary<string, CsvColumn> LoadCsvDefinitions(string csvDefinitionsPath) 
+		private static IReadOnlyDictionary<string, CsvColumn> LoadCsvDefinitions(string csvDefinitionsPath)
 		{
 			XLWorkbook workbook;
 			using (var fs = new FileStream(csvDefinitionsPath, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -41,13 +41,13 @@ namespace CenterCLR.Demo2
 
 			return
 				(from worksheet in workbook.Worksheets
-					from rowIndex in Enumerable.Range(1, worksheet.RowCount()).AsParallel()
-					let number = ParseInt32(worksheet.Cell(rowIndex, 1).Value.ToString().Trim(), -1)
-					let fieldName = worksheet.Cell(rowIndex, 2).Value.ToString().Trim()
-					let fieldDescription = worksheet.Cell(rowIndex, 3).Value.ToString().Trim()
-					let fieldType = worksheet.Cell(rowIndex, 4).Value.ToString().Trim()
-					where (number >= 0) && (fieldName.Length >= 1) && (fieldType.Length >= 1)
-					select new CsvColumn(number, fieldName, fieldDescription, fieldType)).
+				 from rowIndex in Enumerable.Range(1, worksheet.RowCount()).AsParallel()
+				 let number = ParseInt32(worksheet.Cell(rowIndex, 1).Value.ToString().Trim(), -1)
+				 let fieldName = worksheet.Cell(rowIndex, 2).Value.ToString().Trim()
+				 let fieldDescription = worksheet.Cell(rowIndex, 3).Value.ToString().Trim()
+				 let fieldType = worksheet.Cell(rowIndex, 4).Value.ToString().Trim()
+				 where (number >= 0) && (fieldName.Length >= 1) && (fieldType.Length >= 1)
+				 select new CsvColumn(number, fieldName, fieldDescription, fieldType)).
 				ToDictionary(entry => entry.FieldName, entry => entry);
 		}
 
@@ -88,21 +88,6 @@ namespace CenterCLR.Demo2
 
 				tw.WriteLine("	public sealed class {0}", modelName);
 				tw.WriteLine("	{");
-
-				// コンストラクタを定義
-				tw.WriteLine("		public {0}(string[] fields)", modelName);
-				tw.WriteLine("		{");
-
-				foreach (var column in csvDefinitions.Values.OrderBy(column => column.Number))
-				{
-					tw.WriteLine(
-						"			this.{0} = ({2})Utilities.ConvertTo(fields[{1}], typeof({2}));",
-						column.FieldName,
-						column.Number,
-						column.FieldClrType);
-				}
-
-				tw.WriteLine("		}");
 
 				foreach (var column in csvDefinitions.Values.OrderBy(column => column.Number))
 				{
@@ -170,18 +155,128 @@ namespace CenterCLR.Demo2
 		}
 
 		private static IEnumerable<T> CreateCsvContext2<T>(string csvDefinitionPath, Encoding encoding)
+			where T : new()
 		{
 			// コンストラクタのパラメータを示す式木 (string[] fields)
-			var parameters = new[] { Expression.Parameter(typeof(string[])) };
+			var fieldsExpression = Expression.Parameter(typeof(string[]));
+			var parameters = new[] { fieldsExpression };
 
-			// var model = (fields) => new T(fields);
-			var root = Expression.Lambda<Func<string[], T>>(
-				Expression.New(
-				typeof(T).GetConstructor(new[] { typeof(string[]) }), parameters),
+			// 生成したいのは、こういうラムダ式に相当する式木（但しクラスはT型）
+			//Expression<Func<string[], CsvModel>> creatorExpression = fields => new CsvModel
+			//{
+			//	コード = int.Parse(fields[0], CultureInfo.InvariantCulture),
+			//	旧郵便番号 = fields[1],
+			//	郵便番号 = fields[2],
+			//	// ...
+			//};
+
+			// T型のインスタンスを生成する式木を生成
+			// new T()
+			var newExpression = Expression.New(
+				typeof(T).GetConstructor(Type.EmptyTypes));
+
+			// T型のプロパティ群を初期化するための代入式の式木群を生成
+			// T {
+			//	コード = int.Parse(fields[0], CultureInfo.InvariantCulture),
+			//	旧郵便番号 = fields[1],
+			//	郵便番号 = fields[2],
+			//	// ...
+			// }
+			var memberAssignmentExpressions = typeof(T).GetProperties().
+				Select(pi =>
+				{
+					// 属性からフィールドのインデックス値を入手
+					var index = pi.GetCustomAttribute<CsvColumnIndexAttribute>().Index;
+
+					// インデックス値を示す式木を生成
+					var indexExpression = Expression.Constant(index);
+
+					// インデックスを指定して配列にアクセスする式木を生成
+					// fields[index]
+					var arrayAccessExpression = Expression.ArrayAccess(
+						fieldsExpression,
+						indexExpression);
+
+					// ConvertToに相当する式木の処理：式木内で変換操作を行う必要がある。
+					Expression convertToExpression;
+
+					// 真偽値なら
+					if (pi.PropertyType == typeof(bool))
+					{
+						// int.Parseでintに変換する
+						// int.Parse(fields[index])
+						var callExpression = Expression.Call(
+							null,
+							typeof(int).GetMethod("Parse", new[] { typeof(string) }),
+							arrayAccessExpression);
+
+						// 数値が0かどうかを判定する式で、真偽値に変換する
+						// int.Parse(fields[index]) != 0
+						convertToExpression = Expression.NotEqual(
+							callExpression,
+							Expression.Constant(0));
+					}
+					// Enumなら
+					else if (pi.PropertyType.IsEnum == true)
+					{
+						// Enum.Parseメソッドを使う（P型はプロパティの型）
+						// Enum.Parse(typeof(P), fields[index])
+						var callExpression = Expression.Call(
+							null,
+							typeof(Enum).GetMethod("Parse", new[] { typeof(Type), typeof(string) }),
+							Expression.Constant(pi.PropertyType),
+							arrayAccessExpression);
+
+						// 結果をキャストする
+						// (P)Convert.ChangeType(fields[index], typeof(P))
+						convertToExpression = Expression.Convert(
+							callExpression,
+							pi.PropertyType);
+					}
+					// 文字列なら
+					else if (pi.PropertyType == typeof(string))
+					{
+						// fieldsは元々文字列なので、変換操作は不要
+						convertToExpression = arrayAccessExpression;
+					}
+					// その他
+					else
+					{
+						// Convert.ChangeTypeメソッドを使う（P型はプロパティの型）
+						// Convert.ChangeType(fields[index], typeof(P))
+						var callExpression = Expression.Call(
+							null,
+							typeof(Convert).GetMethod("ChangeType", new[] { typeof(object), typeof(Type) }),
+							arrayAccessExpression,
+							Expression.Constant(pi.PropertyType));
+
+						// 結果をキャストする
+						// (P)Convert.ChangeType(fields[index], typeof(P))
+						convertToExpression = Expression.Convert(
+							callExpression,
+							pi.PropertyType);
+					}
+
+					// 変換の結果をプロパティに代入する式木を生成
+					return Expression.Bind(
+						pi,
+						convertToExpression);
+				});
+
+			// T型のインスタンスを生成し、fieldsの値をプロパティに群に代入する式木を生成
+			// new T { ... }
+			var memberInitExpression = Expression.MemberInit(
+					newExpression,
+					memberAssignmentExpressions);
+
+			// T型のインスタンスを生成して初期化するラムダ式を示す式木を生成
+			// fields => new T { ... }
+			var lambdaExpression = Expression.Lambda<Func<string[], T>>(
+				memberInitExpression,
 				parameters);
 
 			// 式木をコンパイルして、実行可能なデリゲートを得る
-			var creator = root.Compile();
+			var creator = lambdaExpression.Compile();
 
 			using (var fs = new FileStream(csvDefinitionPath, FileMode.Open, FileAccess.Read, FileShare.Read))
 			{
